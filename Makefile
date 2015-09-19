@@ -13,11 +13,9 @@ unzip: working/raw/.sentinel
 output/Scorecard.csv:
 	mkdir -p output
 	python scripts/scorecard.py
+scorecard: output/Scorecard.csv
 
-working/ScorecardNoHeader.csv: output/Scorecard.csv
-	tail +2 $^ > $@
-
-output/database.sqlite: working/ScorecardNoHeader.csv
+output/database.sqlite: output/Scorecard.csv
 	-rm output/database.sqlite
 	sqlite3 -echo $@ < working/sqliteImport.sql
 sqlite: output/database.sqlite

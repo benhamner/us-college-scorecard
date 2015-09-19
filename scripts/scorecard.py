@@ -1,4 +1,5 @@
 import csv
+import sqlite3
 
 # Process data dictionary
 sqlite_types = {
@@ -13,7 +14,6 @@ label_col=8
 previous_col = None
 columns = {}
 for (i, row) in enumerate(csv.reader(open("working/raw/CollegeScorecard_Raw_Data/CollegeScorecardDataDictionary-09-12-2015.csv"))):
-#    print("Row %d, %s, %s, %s" % (i+1, row[name_col], row[value_col], row[label_col]))
     if i==0:
         assert row[name_col]=="VARIABLE NAME"
         assert row[type_col]=="API data type"
@@ -37,6 +37,7 @@ for (i, row) in enumerate(csv.reader(open("working/raw/CollegeScorecard_Raw_Data
         columns[previous_col]["key"][row[value_col]] = row[label_col]
 print(len(columns))
 columns["Year"] = {"type": sqlite_types["integer"]}
+columns["Id"]   = {"type": "INTEGER PRIMARY KEY"}
 
 # Correcting errors in dictionary/data combination
 for col in ["CIP01CERT1", "CIP01CERT2", "CIP01ASSOC"]:
@@ -59,15 +60,14 @@ r = csv.reader(open(filename_from_year(years[0])))
 rows = list(r)
 header_raw = rows[0]
 
-f = open("output/Scorecard.csv", "w")
-
-w = csv.writer(f)
+w = csv.writer(open("output/Scorecard.csv", "w"))
 
 if header_raw[0]=="\ufeffUNITID":
     print("removing unicode from header")
     header = ["UNITID"] + header_raw[1:] + ["Year"]
 else:
     header = header_raw + ["Year"]
+header = ["Id"] + header
 
 for missing in set(header).difference(set(columns.keys())):
     print("Adding column %s as string type" % missing)
@@ -79,6 +79,14 @@ if in_dictionary_not_header:
 
 w.writerow(header)
 
+sqlite_schema = ["    %s %s," % (col, columns[col]["type"]) for col in header]
+sqlite_schema[-1] = sqlite_schema[-1][:-1] + ");"
+sqlite_schema = ["CREATE TABLE Scorecard ("] + sqlite_schema
+sqlite_schema = "\n".join(sqlite_schema)
+conn = sqlite3.connect("output/database.sqlite")
+curs = conn.cursor()
+curs.execute(sqlite_schema)
+
 def transform(x, col_name, columns):
     if x=="NULL":
         return ""
@@ -89,21 +97,22 @@ def transform(x, col_name, columns):
             print("Key %s not found in column %s" %(x, col_name))
     return x
 
+row_id=0
+insert_statement = "INSERT INTO Scorecard (%s) VALUES (%s)" % (",".join(header[:900]), ",".join(["?" for el in header[:900]]))
+     
 for year in years:
     rows = list(csv.reader(open(filename_from_year(year))))
     if header_raw != rows[0]:
         raise Exception("Different headers")
     for row in rows[1:]:
-        row = row + [str(year)]
+        if row_id % 1000 == 0:
+            print("row: %d" % row_id)
+        row_id += 1
+        row = [row_id] + row + [str(year)]
         row = [transform(row[i], col, columns) for (i, col) in enumerate(header)]
+        curs.execute(insert_statement, row[:900])
+        update_statement = "UPDATE Scorecard SET %s WHERE Id=%d" % (",".join([col+"=?" for col in header[900:]]), row_id)
+        curs.execute(update_statement, row[900:])
         w.writerow(row)
-f.close()
 
-sqlite_imports = ["    %s %s," % (col, columns[col]["type"]) for col in header]
-sqlite_imports[-1] = sqlite_imports[-1][:-1] + ");"
-sqlite_imports = ([".separator \",\"", "", "CREATE TABLE Scorecard ("] + 
-                  sqlite_imports +
-                  ["", ".import working/ScorecardNoHeader.csv Scorecard"])
-f = open("working/sqliteImport.sql", "w")
-f.write("\n".join(sqlite_imports))
-f.close()
+conn.commit()
