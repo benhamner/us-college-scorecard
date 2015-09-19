@@ -10,21 +10,16 @@ working/raw/.sentinel: input/CollegeScorecard_Raw_Data.zip
 	touch working/raw/.sentinel
 unzip: working/raw/.sentinel
 
-output/Scorecard.csv:
+output/Scorecard.csv: working/raw/.sentinel
 	mkdir -p output
 	python scripts/scorecard.py
 scorecard: output/Scorecard.csv
-
-output/database.sqlite: output/Scorecard.csv
-	-rm output/database.sqlite
-	sqlite3 -echo $@ < working/sqliteImport.sql
-sqlite: output/database.sqlite
 
 output/FullDataDocumentation.pdf: working/raw/.sentinel
 	mkdir -p output
 	cp -r working/raw/CollegeScorecard_Raw_Data/* output
 
-output/hashes.txt: output/database.sqlite output/FullDataDocumentation.pdf
+output/hashes.txt: output/Scorecard.csv output/FullDataDocumentation.pdf
 	-rm output/hashes.txt
 	echo "Current git commit:" >> output/hashes.txt
 	git rev-parse HEAD >> output/hashes.txt

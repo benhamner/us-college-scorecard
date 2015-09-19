@@ -98,7 +98,6 @@ def transform(x, col_name, columns):
     return x
 
 row_id=0
-insert_statement = "INSERT INTO Scorecard (%s) VALUES (%s)" % (",".join(header[:900]), ",".join(["?" for el in header[:900]]))
      
 for year in years:
     rows = list(csv.reader(open(filename_from_year(year))))
@@ -110,9 +109,14 @@ for year in years:
         row_id += 1
         row = [row_id] + row + [str(year)]
         row = [transform(row[i], col, columns) for (i, col) in enumerate(header)]
-        curs.execute(insert_statement, row[:900])
-        update_statement = "UPDATE Scorecard SET %s WHERE Id=%d" % (",".join([col+"=?" for col in header[900:]]), row_id)
-        curs.execute(update_statement, row[900:])
+        insert_statement = "INSERT INTO Scorecard (%s) VALUES (%s)" % (",".join([col for (i, col) in enumerate(header[:900]) if row[i]]), ",".join(["?" for el in row[:900] if el]))
+        curs.execute(insert_statement, [el for el in row[:900] if el])
+        update_statement = "UPDATE Scorecard SET %s WHERE Id=%d" % (",".join([col+"=?" for (i, col) in enumerate(header[900:]) if row[i+900]]), row_id)
+        curs.execute(update_statement, [el for el in row[900:] if el])
         w.writerow(row)
 
+conn.commit()
+
+curs = conn.cursor()
+curs.execute("VACUUM;")
 conn.commit()
