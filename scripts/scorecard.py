@@ -24,7 +24,7 @@ for (i, row) in enumerate(csv.reader(open("working/raw/CollegeScorecard_Raw_Data
         previous_col = row[name_col]
         if row[type_col]=="integer" and row[value_col].strip() != "":
             assert row[label_col].strip() != ""
-            columns[row[name_col]] = {"type": sqlite_types[row[type_col]],
+            columns[row[name_col]] = {"type": sqlite_types["string"],
                                       "key": {row[value_col]: row[label_col]}}
         elif row[type_col] in sqlite_types:
             assert row[value_col].strip() == ""

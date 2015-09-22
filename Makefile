@@ -28,7 +28,7 @@ output/hashes.txt: output/Scorecard.csv output/FullDataDocumentation.pdf
 	md5 output/*.sqlite >> output/hashes.txt
 hashes: output/hashes.txt
 
-release: output/database.sqlite output/hashes.txt
+release: output/Scorecard.csv output/hashes.txt
 	zip -r -X output/release-`date -u +'%Y-%m-%d-%H-%M-%S'` output/*
 
 all: hashes
