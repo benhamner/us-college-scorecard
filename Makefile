@@ -4,20 +4,20 @@ input/CollegeScorecard_Raw_Data.zip:
 	curl https://s3.amazonaws.com/ed-college-choice-public/CollegeScorecard_Raw_Data.zip -o input/CollegeScorecard_Raw_Data.zip
 input: input/CollegeScorecard_Raw_Data.zip
 
-working/raw/.sentinel: input/CollegeScorecard_Raw_Data.zip
+working/.sentinel: input/CollegeScorecard_Raw_Data.zip
 	mkdir -p working
-	unzip input/CollegeScorecard_Raw_Data.zip -d working/raw
-	touch working/raw/.sentinel
-unzip: working/raw/.sentinel
+	unzip input/CollegeScorecard_Raw_Data.zip -d working
+	touch working/.sentinel
+unzip: working/.sentinel
 
-output/Scorecard.csv: working/raw/.sentinel
+output/Scorecard.csv: working/.sentinel
 	mkdir -p output
 	python scripts/scorecard.py
 scorecard: output/Scorecard.csv
 
-output/FullDataDocumentation.pdf: working/raw/.sentinel
+output/FullDataDocumentation.pdf: working/.sentinel
 	mkdir -p output
-	cp -r working/raw/CollegeScorecard_Raw_Data/* output
+	cp -r working/CollegeScorecard_Raw_Data/* output
 
 output/hashes.txt: output/Scorecard.csv output/FullDataDocumentation.pdf
 	-rm output/hashes.txt

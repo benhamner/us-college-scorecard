@@ -13,7 +13,7 @@ value_col=7
 label_col=8
 previous_col = None
 columns = {}
-for (i, row) in enumerate(csv.reader(open("working/raw/CollegeScorecard_Raw_Data/CollegeScorecardDataDictionary-09-12-2015.csv"))):
+for (i, row) in enumerate(csv.reader(open("working/CollegeScorecard_Raw_Data/CollegeScorecardDataDictionary-09-12-2015.csv"))):
     if i==0:
         assert row[name_col]=="VARIABLE NAME"
         assert row[type_col]=="API data type"
@@ -54,7 +54,7 @@ if "0" not in columns["CCUGPROF"]["key"]:
 
 # Process data files
 years = range(1996, 2014)
-filename_from_year = lambda year: "working/raw/CollegeScorecard_Raw_Data/MERGED%d_PP.csv" % year
+filename_from_year = lambda year: "working/CollegeScorecard_Raw_Data/MERGED%d_PP.csv" % year
 
 r = csv.reader(open(filename_from_year(years[0])))
 rows = list(r)
@@ -115,6 +115,10 @@ for year in years:
         curs.execute(update_statement, [el for el in row[900:] if el])
         w.writerow(row)
 
+conn.commit()
+
+curs = conn.cursor()
+curs.execute("CREATE INDEX scorecard_instnm_ix ON Scorecard (INSTNM);")
 conn.commit()
 
 curs = conn.cursor()
