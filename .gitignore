@@ -3,6 +3,9 @@ working
 input
 output
 
+# RMarkdown temp file
+scripts/Exploring.html
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

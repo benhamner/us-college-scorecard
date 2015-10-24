@@ -1,0 +1,305 @@
+---
+title: "Exploring the US College Scorecard Data"
+author: "Ben Hamner"
+---
+
+Recently, the US government released college scorecard data.
+
+I've transformed this data to two more digestable formats: a single CSV file and a SQLite database. You can download this transformed data [on Kaggle](https://www.kaggle.com/c/us-college-scorecard/data), see the code used to create the data [on GitHub](https://github.com/benhamner/us-college-scorecard), and share your analytics on [Kaggle Scripts](https://www.kaggle.com/c/us-college-scorecard/scripts).
+
+Let's connect to the database and start exploring it. We'll use the RSQLite library to do so.
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=6)
+setwd("/Users/benhamner/Git/us-college-scorecard/scripts")
+library.warn <- library
+library <- function(package, help, pos = 2, lib.loc = NULL, character.only = FALSE,
+  logical.return = FALSE, warn.conflicts = TRUE, quietly = FALSE,
+  verbose = getOption("verbose")) {
+  if (!character.only) {
+    package <- as.character(substitute(package))
+  }
+
+  suppressPackageStartupMessages(library.warn(
+    package, help, pos, lib.loc, character.only = TRUE,
+    logical.return, warn.conflicts, quietly, verbose))}
+```
+
+```{r}
+library(RSQLite)
+db <- dbConnect(dbDriver("SQLite"), "../output/database.sqlite")
+```
+
+
+```{r include=FALSE}
+library(xtable)
+print.table <- function(table) {
+  html <- print(xtable(table), type="html", print.results=FALSE, include.rownames=FALSE)
+  cat(paste0("<div style='width:800; overflow:auto; border-width: 2;'><style>td {padding: 3px;} th {padding: 3px;}</style>", html, "</div>"))
+}
+```
+
+First, let's query the database to see what tables we have to work with:
+
+```{r} 
+library(dplyr)
+tables <- dbGetQuery(db, "SELECT Name FROM sqlite_master WHERE type='table'")
+colnames(tables) <- c("Name")
+tables <- tables %>%
+          rowwise() %>%
+          mutate(RowCount=dbGetQuery(db, paste0("SELECT COUNT(Id) RowCount FROM ", Name))$RowCount[1])
+```
+
+There's only one table in the dataset: Scorecard. It has over a hundred thousand rows in it. 
+```{r results='asis'}
+print.table(tables)
+```
+
+Each row corresponds to data on a US school in a given year. The years covered in this data range from 1996 to 2013. Here, you can see the number of schools we have data on for each year.
+```{r fig.width=9}
+library(ggvis)
+dbGetQuery(db, "SELECT Year, COUNT(Id) NumSchools FROM Scorecard GROUP BY Year") %>%
+  ggvis(~Year, ~NumSchools) %>%
+  layer_bars(fill:="#20beff")
+```
+
+This data is very wide and rich: it has 1,731 associated columns. One of the most interesting aspects of this data is the earnings information it contains on students once they graduate. This includes the median earnings years out, as well as the top/bottom quartiles and deciles. Here, we'll query this data for earnings 10 years after matriculation.
+
+```{r warning=FALSE}
+earnings <- dbGetQuery(db, "
+SELECT s11.INSTNM College,
+       s11.CONTROL CollegeType,
+       s11.md_earn_wne_p10 e50,
+       s11.pct10_earn_wne_p10 e10,
+       s11.pct25_earn_wne_p10 e25,
+       s11.pct75_earn_wne_p10 e75,
+       s11.pct90_earn_wne_p10 e90
+FROM Scorecard s11
+-- We have to do a self-join because the CCBASIC metadata is only attached to 2013 data
+-- And 2013 data has no 10 year out earnings data
+INNER JOIN Scorecard s13 ON s11.UNITID=s13.UNITID
+WHERE s11.Year=2011
+  AND s13.Year=2013
+  AND s11.pct75_earn_wne_p10 IS NOT NULL
+  AND s11.pct75_earn_wne_p10 != 'PrivacySuppressed'
+  AND s11.PREDDEG = 'Predominantly bachelor''s-degree granting'
+--Filter out medical schools and the like that are mislabeled as predominantly bachelor's-degree granting
+  AND s13.CCBASIC NOT LIKE '%Special%'
+ORDER BY s11.pct75_earn_wne_p10 DESC")
+earnings <- cbind(Rank=1:nrow(earnings), earnings)
+earnings$College <- paste(earnings$Rank, earnings$College, sep=". ")
+earnings$College <- factor(earnings$College, levels=rev(earnings$College))
+```
+
+From this earnings data, we can see the distribution of earnings 10 years after matriculation at undergraduate institutions. We'll split this into three types of schools: private non-profit, private for-profit, and public. The median earnings for public and private non-profit schools look similar over the bulk of the earnings range. At the very low end, there are more private non-profit schools than public schools. Curiously, the median earnings distribution for private for-profit schools is bimodal.
+
+```{r warning=FALSE}
+library(ggplot2)
+ggplot(earnings, aes(x=e50, color=CollegeType, fill=CollegeType, group=CollegeType)) +
+  geom_density(alpha=0.3) +
+  theme_light(base_size=16) +
+  xlab("Median Earnings 10 Years after Matriculation") + ylab("")
+```
+
+One of the first questions that comes to mind is "what colleges have students that earn the most?" The graph below ranks colleges by their top quartile of earnings ten years after the students matriculated, and plots the distribution of student earnings. Some of the usual suspects appear on top: Harvard, MIT, Stanford, Geogetown, Princeton, and my alma mater Duke.
+
+```{r warning=FALSE}
+ggplot(earnings[1:20,], aes(x=College, ymin=e10, lower=e25, middle=e50, upper=e75, ymax=e90)) +
+  geom_boxplot(stat="identity", fill="#53cfff") + 
+  geom_text(aes(x=College, y=e75-2000, ymax=e75, hjust=0.95, label=paste0("$", e75)), size=4) + 
+  theme_light(base_size=16) +
+  theme(axis.text.y = element_text(hjust=0, color="black"), axis.text.x=element_blank()) +
+  coord_flip() +
+  xlab("") + ylab("") +
+  ggtitle("Top Quartile Earnings 10 Years After Matriculation ($)")
+```
+
+The data includes the median SAT scores of admitted students for each of the colleges.
+
+```{r}
+sat <- dbGetQuery(db, "
+SELECT INSTNM College,
+       SATMTMID Math,
+       SATVRMID Verbal,
+       SATWRMID Writing
+FROM Scorecard
+WHERE Year=2013
+  AND SATMTMID IS NOT NULL
+  AND SATMTMID != 'PrivacySuppressed'
+  AND SATVRMID IS NOT NULL
+  AND SATVRMID != 'PrivacySuppressed'
+  AND SATWRMID IS NOT NULL
+  AND SATWRMID != 'PrivacySuppressed'")
+```
+
+We can see the distribution of these median scores across all colleges in the data. The distribution of median section scores for admitted students at colleges is remarkably consistent between the SAT Math, Verbal, and Writing sections.
+
+```{r}
+library(tidyr)
+ggplot(sat %>% gather(Section, Score, -College), aes(x=Score, color=Section, fill=Section, group=Section)) +
+  geom_density(alpha=0.3) +
+  theme_light(base_size=16) +
+  xlab("SAT Score") +
+  ylab("")
+```
+
+We can also see what schools have the top median SAT Math and Verbal scores.
+
+```{r}
+library(dplyr)
+topSatMath <- sat %>% arrange(desc(Math)) %>% head(n=20)
+topSatMath <- cbind(Rank=1:nrow(topSatMath), topSatMath)
+topSatMath$College <- paste(topSatMath$Rank, topSatMath$College, sep=". ")
+topSatMath$College <- factor(topSatMath$College, levels=rev(topSatMath$College))
+
+ggplot(topSatMath, aes(x=College, y=Math)) +
+  geom_bar(stat="identity", fill="#53cfff") + 
+  geom_text(aes(x=College, y=Math-5, ymax=Math, hjust=1, label=Math), size=4) + 
+  theme_light(base_size=16) +
+  theme(axis.text.y = element_text(hjust=0, color="black"), axis.text.x=element_blank()) +
+  xlab("") + ylab("") +
+  coord_flip(ylim=c(700, 800)) +
+  ggtitle("Top SAT Math Scores")
+```
+
+Half of Caltech's class had a SAT Math score of at least 785 - only 15 points off from perfect.
+
+```{r}
+topSatVerbal <- sat %>% arrange(desc(Verbal)) %>% head(n=20)
+topSatVerbal <- cbind(Rank=1:nrow(topSatVerbal), topSatVerbal)
+topSatVerbal$College <- paste(topSatVerbal$Rank, topSatVerbal$College, sep=". ")
+topSatVerbal$College <- factor(topSatVerbal$College, levels=rev(topSatVerbal$College))
+
+ggplot(topSatVerbal, aes(x=College, y=Verbal)) +
+  geom_bar(stat="identity", fill="#53cfff") +
+  geom_text(aes(x=College, y=Verbal-5, ymax=Verbal, hjust=0.95, label=Verbal), size=4) + 
+  theme_light(base_size=16) +
+  theme(axis.text.y = element_text(hjust=0, color="black"), axis.text.x=element_blank()) +
+  xlab("") + ylab("") +
+  coord_flip(ylim=c(700, 800)) +
+  ggtitle("Top SAT Verbal Scores")
+```
+
+```{r}
+lowestAdmissionRates <- dbGetQuery(db, "
+SELECT INSTNM College,
+       ADM_RATE*100.0 AdmissionRate
+FROM Scorecard
+WHERE Year=2013
+  AND ADM_RATE IS NOT NULL
+  AND ADM_RATE != 0.0
+  AND PREDDEG='Predominantly bachelor''s-degree granting'
+  AND CCBASIC NOT LIKE '%Special Focus%'
+ORDER BY ADM_RATE
+LIMIT 20")
+lowestAdmissionRates <- cbind(Rank=1:nrow(lowestAdmissionRates), lowestAdmissionRates)
+lowestAdmissionRates$College <- paste(lowestAdmissionRates$Rank, lowestAdmissionRates$College, sep=". ")
+lowestAdmissionRates$College <- factor(lowestAdmissionRates$College, levels=rev(lowestAdmissionRates$College))
+
+ggplot(lowestAdmissionRates, aes(x=College, y=AdmissionRate)) +
+  geom_bar(stat="identity", fill="#53cfff") +
+  geom_text(aes(x=College, y=AdmissionRate-0.55, ymax=AdmissionRate, hjust=0.95, label=paste0(AdmissionRate, "%")), size=4) + 
+  theme_light(base_size=16) +
+  theme(axis.text.y = element_text(hjust=0, color="black"), axis.text.x=element_blank()) +
+  xlab("") + ylab("") +
+  coord_flip() +
+  ggtitle("Lowest Admission Rates")
+```
+
+```{r}
+engineeringDegrees <- dbGetQuery(db, "
+SELECT INSTNM College,
+       PCIP14*100 PercentEngineeringDegrees,
+       CONTROL CollegeType
+FROM Scorecard
+WHERE Year=2013
+  AND PREDDEG='Predominantly bachelor''s-degree granting'
+  AND CCBASIC NOT LIKE '%Special Focus%'
+ORDER BY PCIP14 DESC")
+engineeringDegrees <- cbind(Rank=1:nrow(engineeringDegrees), engineeringDegrees)
+engineeringDegrees$College <- paste(engineeringDegrees$Rank, engineeringDegrees$College, sep=". ")
+engineeringDegrees$College <- factor(engineeringDegrees$College, levels=rev(engineeringDegrees$College))
+
+ggplot(engineeringDegrees, aes(x=PercentEngineeringDegrees, color=CollegeType, fill=CollegeType, group=CollegeType)) +
+  geom_density(alpha=0.3) +
+  theme_light(base_size=16) +
+  xlab("Percent Engineering Degrees") + ylab("")
+
+ggplot(engineeringDegrees[1:20,], aes(x=College, y=PercentEngineeringDegrees)) +
+  geom_bar(stat="identity", fill="#53cfff") +
+  geom_text(aes(x=College, y=PercentEngineeringDegrees-2, ymax=PercentEngineeringDegrees, hjust=0.95, label=PercentEngineeringDegrees), size=4) + 
+  theme_light(base_size=16) +
+  theme(axis.text.y = element_text(hjust=0, color="black"), axis.text.x=element_blank()) +
+  xlab("") + ylab("") +
+  coord_flip() +
+  ggtitle("Colleges with the highest percentage of engineering students")
+```
+
+```{r warning=FALSE}
+enrollment <- dbGetQuery(db, "
+SELECT INSTNM College,
+       UGDS UndergradEnrollment,
+       CONTROL CollegeType
+FROM Scorecard
+WHERE Year=2013
+  AND PREDDEG='Predominantly bachelor''s-degree granting'
+  AND CCBASIC NOT LIKE '%Special Focus%'
+  AND UGDS IS NOT NULL
+  AND UGDS>0
+ORDER BY UGDS DESC")
+enrollment <- cbind(Rank=1:nrow(enrollment), enrollment)
+enrollment$College <- paste(enrollment$Rank, enrollment$College, sep=". ")
+enrollment$College <- factor(enrollment$College, levels=rev(enrollment$College))
+
+ggplot(enrollment, aes(x=UndergradEnrollment, color=CollegeType, fill=CollegeType, group=CollegeType)) +
+  geom_density(alpha=0.3) +
+  theme_light(base_size=16) +
+  xlab("Undergraduate Enrollment") + ylab("") +
+  xlim(0, 20000)
+
+ggplot(enrollment[1:20,], aes(x=College, y=UndergradEnrollment)) +
+  geom_bar(stat="identity", fill="#53cfff") +
+  geom_text(aes(x=College, y=UndergradEnrollment-1000, ymax=UndergradEnrollment, hjust=0.95, label=UndergradEnrollment), size=4) + 
+  theme_light(base_size=16) +
+  theme(axis.text.y = element_text(hjust=0, color="black"), axis.text.x=element_blank()) +
+  xlab("") + ylab("") +
+  coord_flip() +
+  ggtitle("Largest Colleges By Undergraduate Enrollment")
+```
+
+The cost here reflects the average annual total cost of attendance, including tuition and fees, books and supplies, and living expenses for all full-time, first-time, degree/certificate-seeking undergraduates who receive Title IV aid.
+
+```{r}
+cost <- dbGetQuery(db, "
+SELECT INSTNM College,
+       COSTT4_A Cost,
+       CONTROL CollegeType
+FROM Scorecard
+WHERE Year=2013
+  AND PREDDEG='Predominantly bachelor''s-degree granting'
+  AND CCBASIC NOT LIKE '%Special Focus%'
+  AND COSTT4_A IS NOT NULL
+ORDER BY COSTT4_A DESC")
+cost <- cbind(Rank=1:nrow(cost), cost)
+cost$College <- paste(cost$Rank, cost$College, sep=". ")
+cost$College <- factor(cost$College, levels=rev(cost$College))
+```
+```{r}
+ggplot(cost, aes(x=Cost, color=CollegeType, fill=CollegeType, group=CollegeType)) +
+  geom_density(alpha=0.3) +
+  theme_light(base_size=16) +
+  xlab("") + ylab("Cost of Attendance")
+```
+
+I got sticker shock when I saw the total cost of attendance for the most expensive colleges - this has risen dramatically even since I graduated five years ago.
+
+```{r}
+ggplot(cost[1:20,], aes(x=College, y=Cost)) +
+  geom_bar(stat="identity", fill="#53cfff") +
+  geom_text(aes(x=College, y=Cost-500, ymax=Cost, hjust=0.95, label=paste0("$", Cost)), size=4) + 
+  theme_light(base_size=16) +
+  theme(axis.text.y = element_text(hjust=0, color="black"), axis.text.x=element_blank()) +
+  xlab("") + ylab("") +
+  coord_flip() +
+  ggtitle("Most Expensive Colleges")
+```
